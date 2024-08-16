@@ -1,50 +1,59 @@
 import torch
 import torch.nn as nn
 
-from .config import LoraConfig
+from config import LoraConfig
+from typing import Tuple
 
 
 class LoraLinear(nn.Module):
-    def __init__(self, base_layer: nn.Module, config: LoraConfig, device: str = None):
+    def __init__(
+        self,
+        base_layer: nn.Module,
+        config: LoraConfig,
+        weight: Tuple[torch.Tensor, torch.Tensor] = (None, None),
+        device: str = None,
+    ):
         super().__init__()
-        if not isinstance(base_layer, nn.Linear):
-            raise TypeError('Base layer must be a nn.Linear module')
 
+        if not isinstance(base_layer, nn.Linear):
+            raise ValueError("Base layer must be of type nn.Linear.")
         out_dim, in_dim = base_layer.weight.shape
 
-        self.base_layer_ = base_layer
-        self.device_ = torch.device(device) if device else base_layer.weight.device
-        self.dtype_ = config.dtype_
+        self._base_layer_ = base_layer
+        self._device = torch.device(device) if device else base_layer.weight.device
+        self._dtype = config.dtype
 
-        self.initializer_ = config.lora_init_
-        self.r_ = config.lora_r_
-        self.alpha_ = config.lora_alpha_
+        self._initializer = config.lora_init
+        self._r = config.lora_r
+        self._alpha = config.lora_alpha
+        self._scaling = self._alpha / self._r
 
-        self.scaling_ = self.alpha_ / self.r_
+        self._in_features = in_dim
+        self._out_features = out_dim
 
-        self.in_features_ = in_dim
-        self.out_features_ = out_dim
-
-        assert config.lora_dropout_ > 0.0
-        self.dropout_ = nn.Dropout(p=config.lora_dropout_)
+        assert config.lora_dropout > 0.0
+        self._dropout = nn.Dropout(p=config.lora_dropout)
 
         self.lora_A = nn.Linear(
-            self.in_features_,
-            self.r_,
+            self._in_features,
+            self._r,
             bias=False,
-            dtype=self.dtype_,
-            device=self.device_,
+            dtype=self._dtype,
+            device=self._device,
         )
-
         self.lora_B = nn.Linear(
-            self.r_,
-            self.out_features_,
+            self._r,
+            self._out_features,
             bias=False,
-            dtype=self.dtype_,
-            device=self.device_,
+            dtype=self._dtype,
+            device=self._device,
         )
 
+        self.reset_parameters(weight)
 
+    def forward(self, x):
 
+        original_output = self.base_layer(x)
+        lora_output = self.lora_B(self.lora_A(x))
 
-
+        return original_output + self._dropout(lora_output) * self._scaling
